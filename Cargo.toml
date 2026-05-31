@@ -1,0 +1,16 @@
+[package]
+name = "iss-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "RV32I_Zicsr instruction-set-simulator Core (pure CPU FSM) — Rust rewrite of comporg-labs/iss"
+license = "MIT"
+
+[lib]
+name = "iss_core"
+path = "src/lib.rs"
+
+[lints.clippy]
+# The decoder and CSR file deliberately spell out every RV32I encoding;
+# allow the resulting breadth rather than collapsing it into terse tables.
+too_many_arguments = "allow"
