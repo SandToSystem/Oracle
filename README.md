@@ -34,12 +34,15 @@ src/
 ├── alu.rs        AluOp / BranchType evaluators
 ├── decode/       raw bit-field extractors + control-signal enums + decode()
 ├── execute.rs    Action / Staging — Execute produces, never mutates state
+├── loader.rs     load_elf / load_elf_bytes — parse an ELF32 RISC-V exe and
+│                 stage its PT_LOAD segments into any Bus (port of elf_loader.c)
 ├── packet.rs     CommitPacket / HaltKind / TrapEvent (the verify protocol)
 └── core.rs       Core<B: Bus> — step / barrier / commit / trap / run loop
 tests/
 ├── decode.rs           per-format decode checks (port of test_decode.c)
 ├── core_integration.rs programs run on RamBus, asserting the packet stream
-└── hermes_bridge.rs    a Core driven over Hermes's MemoryMap + Dram fabric
+├── hermes_bridge.rs    a Core driven over Hermes's MemoryMap + Dram fabric
+└── elf_loader.rs       load an ELF into the DRAM fabric, then run it to halt
 ```
 
 ## Public API
@@ -69,6 +72,29 @@ Key entry points:
 | `Core::state()` / `state_mut()` / `set_state()` | read/seed architectural state |
 | `Core::csrs_mut().set_wires(msip, mtip, meip)` | drive the three `mip` interrupt wires |
 | `Bus` | the memory abstraction (`RamBus`, or Hermes's `MemoryMap` of `MmioDevice`s) |
+
+## Loading ELF programs
+
+Instead of hand-staging word arrays, parse a real ELF32 RISC-V executable and
+write its `PT_LOAD` segments into any [`Bus`] (`RamBus` or the Hermes
+`MemoryMap` fabric). The entry point is returned for the caller to seed `pc`.
+
+```rust
+use iss_core::{load_elf_bytes, Core, RamBus, Bus, Width};
+
+let mut bus = RamBus::new(0x8000_0000, 0x1000);
+let entry = load_elf_bytes(&mut bus, &elf_image)?;   // elf_image: &[u8]
+
+let mut core = Core::new(bus);
+core.state_mut().pc = entry;                          // start at e_entry
+let halt = core.run_until_halt(|_pkt| {});
+# Ok::<(), iss_core::ElfError>(())
+```
+
+`load_elf(&mut bus, path)` is the file-path wrapper. Both validate
+`ELFCLASS32` / `EM_RISCV` / `ET_EXEC` and return [`ElfError`] on a bad image or
+a segment that lands outside the bus. The loader does **not** zero
+`p_memsz - p_filesz` (that is crt0's `.bss` job).
 
 ## Halt exit codes
 

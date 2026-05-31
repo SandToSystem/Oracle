@@ -11,6 +11,7 @@ name = "iss_core"
 path = "src/lib.rs"
 
 [dependencies]
+elf = { version = "0.7.4", default-features = false, features = ["std"] }
 # The SoC fabric, devices, and the shared AXI vocabulary (AxiResp/Width/Slverr,
 # MmioDevice, MemoryMap, le_load/le_store) live in the Hermes submodule. ISS
 # re-exports them rather than redefining its own divergent copies.
