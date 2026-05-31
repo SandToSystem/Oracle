@@ -46,6 +46,8 @@
 //! - [`csr`] — the M-mode [`CsrFile`].
 //! - [`arch`] — [`ArchState`] (PC + 32 GPRs + CSR file).
 //! - [`decode`] — instruction decode into a [`Uop`](decode::Uop).
+//! - [`loader`] — [`load_elf`] / [`load_elf_bytes`]: parse an ELF32 RISC-V
+//!   executable and stage its `PT_LOAD` segments into any [`Bus`].
 //! - [`packet`] — the [`CommitPacket`] verification protocol.
 
 pub mod alu;
@@ -55,6 +57,7 @@ pub mod core;
 pub mod csr;
 pub mod decode;
 pub mod execute;
+pub mod loader;
 pub mod packet;
 
 pub use arch::ArchState;
@@ -62,6 +65,7 @@ pub use bus::{AxiResp, Bus, RamBus, Slverr, Width, WidthAlign};
 pub use core::Core;
 pub use csr::CsrFile;
 pub use decode::{decode, Uop};
+pub use loader::{load_elf, load_elf_bytes, ElfError};
 // The device/fabric layer is owned by Hermes; re-exported so ISS's public API
 // still exposes a device interface (`iss_core::MmioDevice`, `MemoryMap`, …).
 pub use hermes::{le_load, le_store, Dram, DramModel, MemoryMap, MmioDevice, Tickable};
