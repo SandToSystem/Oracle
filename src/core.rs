@@ -17,7 +17,7 @@
 //! `core.{h,c}`.
 
 use crate::arch::ArchState;
-use crate::bus::{Bus, Width};
+use crate::bus::{Bus, Width, WidthAlign};
 use crate::csr::CsrFile;
 use crate::decode::decode;
 use crate::execute::{execute, Action, Staging};

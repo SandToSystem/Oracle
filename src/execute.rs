@@ -9,7 +9,7 @@
 //! a halting step.
 
 use crate::arch::ArchState;
-use crate::bus::{AxiResp, Bus, Width};
+use crate::bus::{AxiResp, Bus, Width, WidthAlign};
 use crate::decode::{AluSrc1, AluSrc2, CsrSource, MemOp, RdSource, SystemKind, Uop};
 use crate::packet::HaltKind;
 

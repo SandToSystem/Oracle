@@ -1,72 +1,29 @@
-//! The [`Bus`] abstraction the Core talks to, plus value types shared across
-//! every bus access ([`AxiResp`], [`Width`]) and a flat-memory [`RamBus`].
+//! The [`Bus`] abstraction the Core talks to and a flat-memory [`RamBus`].
 //!
-//! Mirrors the C `MemoryMap` entry points and the `axi_resp_e` vocabulary from
-//! `devices/common`. The C API used `bool`/out-parameters and a `size_t width`;
-//! here the result is a [`Result`] and the width is an enum so an illegal width
-//! is unrepresentable.
+//! The AXI vocabulary ([`AxiResp`], [`Slverr`], [`Width`]) is **owned by the
+//! Hermes submodule** and re-exported here — ISS used to define its own
+//! divergent copies; now there is a single definition. The [`Bus`] trait and
+//! [`RamBus`] are genuinely CPU-side (Hermes has no equivalent) and stay here.
+//!
+//! The Core talks to the bus through [`Bus::read`] / [`Bus::write`]; the
+//! [`impl Bus for hermes::MemoryMap`](Bus) bridge at the bottom lets a `Core`
+//! run on the full Hermes SoC fabric, while [`RamBus`] keeps the flat
+//! fast-path for instruction-level tests.
 
-/// AXI4-Lite response codes (`xRESP`), 2-bit wire encoding.
+pub use hermes::{AxiResp, Slverr, Width};
+
+/// Natural-alignment test for a [`Width`].
 ///
-/// The discriminants match the AXI wire values verbatim so a future DPI bridge
-/// is a pass-through cast. [`AxiResp::ExOkay`] is defined for completeness but
-/// is forbidden by AXI4-Lite (no exclusive access).
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub enum AxiResp {
-    /// `2'b00` — normal access success.
-    Okay = 0,
-    /// `2'b01` — forbidden in AXI4-Lite; present only for wire completeness.
-    ExOkay = 1,
-    /// `2'b10` — subordinate-level error (e.g. write to a read-only register).
-    SlvErr = 2,
-    /// `2'b11` — decode error; raised by the fabric for an unmapped address.
-    DecErr = 3,
-}
-
-impl AxiResp {
-    /// Human-readable tag for diagnostics (mirrors C `axi_resp_name`).
-    pub fn name(self) -> &'static str {
-        match self {
-            AxiResp::Okay => "OKAY",
-            AxiResp::ExOkay => "EXOKAY",
-            AxiResp::SlvErr => "SLVERR",
-            AxiResp::DecErr => "DECERR",
-        }
-    }
-}
-
-/// Access width in bytes. RV32I memory accesses are 1, 2, or 4 bytes wide.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub enum Width {
-    /// 1 byte (`LB`/`LBU`/`SB`).
-    Byte = 1,
-    /// 2 bytes (`LH`/`LHU`/`SH`).
-    Half = 2,
-    /// 4 bytes (`LW`/`SW` and every instruction fetch).
-    Word = 4,
-}
-
-impl Width {
-    /// The width as a byte count (1 / 2 / 4).
-    pub const fn bytes(self) -> u32 {
-        self as u32
-    }
-
-    /// The full AXI `WSTRB` byte-enable for a packed store of this width
-    /// (`0x1` / `0x3` / `0xF`). Per the L1 contract the strobe masks the low
-    /// `width` bytes of the value, not lanes within the 32-bit word.
-    pub const fn full_strb(self) -> u8 {
-        match self {
-            Width::Byte => 0x1,
-            Width::Half => 0x3,
-            Width::Word => 0xF,
-        }
-    }
-
+/// ISS needs this in fetch / branch-target / load-store alignment checks, but
+/// Hermes's shared [`Width`] does not carry it. Provided as an ISS-local
+/// extension trait so the Hermes submodule stays the untouched source of truth.
+pub trait WidthAlign {
     /// `true` when `addr` is naturally aligned for this width (spec §2.6).
-    pub const fn is_aligned(self, addr: u32) -> bool {
+    fn is_aligned(&self, addr: u32) -> bool;
+}
+
+impl WidthAlign for Width {
+    fn is_aligned(&self, addr: u32) -> bool {
         addr & (self.bytes() - 1) == 0
     }
 }
@@ -75,8 +32,8 @@ impl Width {
 ///
 /// The Core only ever calls [`read`](Bus::read) / [`write`](Bus::write); it has
 /// no other dependency on the SoC topology. Implementations return
-/// [`AxiResp::DecErr`] for an unmapped address and propagate a device's
-/// [`AxiResp::SlvErr`] for a subordinate-level error.
+/// [`AxiResp::Decerr`] for an unmapped address and propagate a device's
+/// [`AxiResp::Slverr`] for a subordinate-level error.
 pub trait Bus {
     /// Read `width` bytes at `addr`, returning the zero-extended word.
     fn read(&mut self, addr: u32, width: Width) -> Result<u32, AxiResp>;
@@ -100,7 +57,7 @@ impl<B: Bus + ?Sized> Bus for &mut B {
 
 /// A flat little-endian RAM covering `[base, base + len)`. The canonical bus
 /// for tests: every in-range access is [`AxiResp::Okay`]; anything outside the
-/// region (or straddling its end) is [`AxiResp::DecErr`].
+/// region (or straddling its end) is [`AxiResp::Decerr`].
 #[derive(Clone, Debug)]
 pub struct RamBus {
     base: u32,
@@ -146,21 +103,29 @@ impl RamBus {
 
 impl Bus for RamBus {
     fn read(&mut self, addr: u32, width: Width) -> Result<u32, AxiResp> {
-        let r = self.range(addr, width).ok_or(AxiResp::DecErr)?;
-        let mut buf = [0u8; 4];
-        buf[..r.len()].copy_from_slice(&self.mem[r]);
-        Ok(u32::from_le_bytes(buf))
+        let r = self.range(addr, width).ok_or(AxiResp::Decerr)?;
+        Ok(hermes::le_load(&self.mem[r]))
     }
 
     fn write(&mut self, addr: u32, width: Width, value: u32, strb: u8) -> Result<(), AxiResp> {
-        let r = self.range(addr, width).ok_or(AxiResp::DecErr)?;
-        let bytes = value.to_le_bytes();
-        for (i, slot) in self.mem[r].iter_mut().enumerate() {
-            if strb & (1 << i) != 0 {
-                *slot = bytes[i];
-            }
-        }
+        let r = self.range(addr, width).ok_or(AxiResp::Decerr)?;
+        hermes::le_store(&mut self.mem[r], value, strb);
         Ok(())
+    }
+}
+
+/// Bridge ISS's CPU-side [`Bus`] onto Hermes's address-decoding fabric, so a
+/// `Core<MemoryMap>` runs against the full SoC. `MemoryMap`'s own `read`/`write`
+/// take `&self` (interior mutability via `Rc<RefCell<_>>`); the trait wants
+/// `&mut self`, which trivially satisfies it. Fully-qualified calls avoid
+/// recursing into the trait method.
+impl Bus for hermes::MemoryMap {
+    fn read(&mut self, addr: u32, width: Width) -> Result<u32, AxiResp> {
+        hermes::MemoryMap::read(self, addr, width)
+    }
+
+    fn write(&mut self, addr: u32, width: Width, value: u32, strb: u8) -> Result<(), AxiResp> {
+        hermes::MemoryMap::write(self, addr, width, value, strb)
     }
 }
 
@@ -169,9 +134,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn width_helpers() {
-        assert_eq!(Width::Word.bytes(), 4);
-        assert_eq!(Width::Half.full_strb(), 0x3);
+    fn width_is_aligned() {
+        // `bytes`/`full_strb` are tested in Hermes; here we cover the ISS-local
+        // `WidthAlign` extension (brought in by `use super::*`).
         assert!(Width::Word.is_aligned(0x40));
         assert!(!Width::Word.is_aligned(0x42));
         assert!(Width::Byte.is_aligned(0x3));
@@ -200,9 +165,9 @@ mod tests {
     #[test]
     fn rambus_out_of_range_is_decerr() {
         let mut bus = RamBus::new(0x1000, 0x10);
-        assert_eq!(bus.read(0x0, Width::Word), Err(AxiResp::DecErr));
+        assert_eq!(bus.read(0x0, Width::Word), Err(AxiResp::Decerr));
         assert_eq!(bus.read(0x100C, Width::Word), Ok(0)); // last fully in-range word
-        assert_eq!(bus.read(0x100D, Width::Word), Err(AxiResp::DecErr)); // straddles end
+        assert_eq!(bus.read(0x100D, Width::Word), Err(AxiResp::Decerr)); // straddles end
         assert_eq!(bus.read(0x100F, Width::Byte), Ok(0)); // last in-range byte
     }
 }
