@@ -19,11 +19,16 @@ The Core is generic over a `Bus`; it knows nothing about concrete devices.
 
 ## Layout
 
+The device/fabric layer (`MmioDevice`, the address-decoding `MemoryMap`, and
+concrete devices such as `Dram`) plus the shared AXI vocabulary (`AxiResp`,
+`Slverr`, `Width`, `le_load`/`le_store`) live in the **Hermes** submodule and are
+re-exported here, rather than redefined. ISS keeps only the CPU-side seam.
+
 ```
 src/
-├── lib.rs        crate docs + re-exports
-├── bus.rs        Bus trait, AxiResp, Width, RamBus (flat memory)
-├── device.rs     MmioDevice trait + DeviceBus (address-range dispatch) + Ram
+├── lib.rs        crate docs + re-exports (Hermes device layer re-exported here)
+├── bus.rs        Bus trait, RamBus (flat memory), WidthAlign ext,
+│                 impl Bus for hermes::MemoryMap; AxiResp/Slverr/Width re-exported
 ├── csr.rs        CsrFile — M-mode CSR file (7 storage CSRs + mip wires)
 ├── arch.rs       ArchState (PC + 32 GPRs + CSR file)
 ├── alu.rs        AluOp / BranchType evaluators
@@ -33,7 +38,8 @@ src/
 └── core.rs       Core<B: Bus> — step / barrier / commit / trap / run loop
 tests/
 ├── decode.rs           per-format decode checks (port of test_decode.c)
-└── core_integration.rs programs run on RamBus, asserting the packet stream
+├── core_integration.rs programs run on RamBus, asserting the packet stream
+└── hermes_bridge.rs    a Core driven over Hermes's MemoryMap + Dram fabric
 ```
 
 ## Public API
@@ -62,7 +68,7 @@ Key entry points:
 | `Core::run_until_halt_max(n, …)` | bounded variant (`Err(n)` if it never halts) |
 | `Core::state()` / `state_mut()` / `set_state()` | read/seed architectural state |
 | `Core::csrs_mut().set_wires(msip, mtip, meip)` | drive the three `mip` interrupt wires |
-| `Bus` | the memory abstraction (`RamBus`, or `DeviceBus` of `MmioDevice`s) |
+| `Bus` | the memory abstraction (`RamBus`, or Hermes's `MemoryMap` of `MmioDevice`s) |
 
 ## Halt exit codes
 
@@ -78,7 +84,8 @@ Key entry points:
 
 - **Traits + generics:** `Core<B: Bus>` is monomorphised over the bus (zero
   dispatch on the hot path); a blanket `impl Bus for &mut B` keeps a `dyn`
-  escape hatch. `MmioDevice` + `DeviceBus` compose devices by address range.
+  escape hatch. The same `Core` runs on `RamBus` for fast tests or on Hermes's
+  `MemoryMap` fabric (`MmioDevice`s by address range) via `impl Bus for MemoryMap`.
 - **Rich enums + pattern matching:** control signals (`AluOp`, `SystemKind`,
   `CsrSource`, `Action`, `HaltKind`) carry their data so illegal states are
   unrepresentable — e.g. `CsrSource::Imm(u32)` folds away a separate boolean.

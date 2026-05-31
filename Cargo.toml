@@ -10,6 +10,12 @@ license = "MIT"
 name = "iss_core"
 path = "src/lib.rs"
 
+[dependencies]
+# The SoC fabric, devices, and the shared AXI vocabulary (AxiResp/Width/Slverr,
+# MmioDevice, MemoryMap, le_load/le_store) live in the Hermes submodule. ISS
+# re-exports them rather than redefining its own divergent copies.
+hermes = { path = "Hermes" }
+
 [lints.clippy]
 # The decoder and CSR file deliberately spell out every RV32I encoding;
 # allow the resulting breadth rather than collapsing it into terse tables.

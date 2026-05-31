@@ -1,0 +1,3 @@
+[submodule "Hermes"]
+	path = Hermes
+	url = git@github.com:SandToSystem/Hermes.git

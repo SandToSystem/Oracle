@@ -17,10 +17,11 @@
 //! trap entry and bypasses Commit entirely.
 //!
 //! The Core is generic over a [`Bus`] ([`Core<B: Bus>`](Core)); it knows nothing
-//! about concrete devices. Two bus implementations ship with the crate:
-//! [`RamBus`] (a flat little-endian memory, ideal for tests) and [`DeviceBus`]
-//! (an address-range dispatcher composed of [`MmioDevice`] trait objects,
-//! porting the C `MemoryMap`/`MmioDevice` pair).
+//! about concrete devices. ISS ships [`RamBus`] (a flat little-endian memory,
+//! ideal for instruction-level tests). The device/fabric layer — [`MmioDevice`],
+//! the address-decoding [`MemoryMap`], and concrete devices such as [`Dram`] —
+//! lives in the **Hermes** crate and is re-exported here; a `Core` runs on the
+//! full SoC via `impl Bus for MemoryMap` (see [`bus`]).
 //!
 //! ## Quick start
 //!
@@ -39,8 +40,9 @@
 //! ```
 //!
 //! ## Module map
-//! - [`bus`] — the [`Bus`] trait, [`AxiResp`], [`Width`], and [`RamBus`].
-//! - [`device`] — [`MmioDevice`] trait + [`DeviceBus`] range dispatcher.
+//! - [`bus`] — the [`Bus`] trait, [`RamBus`], the [`WidthAlign`] extension, and
+//!   the `impl Bus for MemoryMap` bridge. [`AxiResp`] / [`Slverr`] / [`Width`]
+//!   are re-exported from Hermes.
 //! - [`csr`] — the M-mode [`CsrFile`].
 //! - [`arch`] — [`ArchState`] (PC + 32 GPRs + CSR file).
 //! - [`decode`] — instruction decode into a [`Uop`](decode::Uop).
@@ -52,14 +54,15 @@ pub mod bus;
 pub mod core;
 pub mod csr;
 pub mod decode;
-pub mod device;
 pub mod execute;
 pub mod packet;
 
 pub use arch::ArchState;
-pub use bus::{AxiResp, Bus, RamBus, Width};
+pub use bus::{AxiResp, Bus, RamBus, Slverr, Width, WidthAlign};
 pub use core::Core;
 pub use csr::CsrFile;
 pub use decode::{decode, Uop};
-pub use device::{AddError, DeviceBus, MmioDevice, Ram};
+// The device/fabric layer is owned by Hermes; re-exported so ISS's public API
+// still exposes a device interface (`iss_core::MmioDevice`, `MemoryMap`, …).
+pub use hermes::{le_load, le_store, Dram, DramModel, MemoryMap, MmioDevice, Tickable};
 pub use packet::{CommitPacket, HaltEvent, HaltKind, StoreObserved, TrapEvent};
