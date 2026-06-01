@@ -93,9 +93,16 @@ fn run_demo_with_input(elf_path: &str, name: &str, input: &[u8], expect: &[&str]
         .uart_rx(Box::new(QueuedBytes::new(input.iter().copied())))
         .build()
         .unwrap_or_else(|e| panic!("{name}: failed to wire SoC: {e:?}"));
-    // Keep the ticker: it shares the UART/CLINT handles with `map`, so ticking
-    // it advances the very devices the core reads through the bus.
-    let Soc { mut map, ticker, .. } = soc;
+    // Keep the ticker and the CLINT/IRQ handles: the ticker shares the device
+    // handles with `map`, and the handles let us bridge the interrupt wires
+    // into the core so RX is delivered as a machine-external interrupt.
+    let Soc {
+        mut map,
+        ticker,
+        clint,
+        irq,
+        ..
+    } = soc;
 
     let entry =
         load_elf(&mut map, elf_path).unwrap_or_else(|e| panic!("{name}: failed to load ELF: {e}"));
@@ -110,7 +117,14 @@ fn run_demo_with_input(elf_path: &str, name: &str, input: &[u8], expect: &[&str]
             halt = Some(h);
             break;
         }
-        ticker.tick_all(); // load the next scripted RX byte once the buffer drains
+        ticker.tick_all(); // advance devices: UART latches a byte, IRQ latches its edge
+                           // Bridge the device interrupt wires into the core's `mip` so the guest's
+                           // RX interrupt fires on the next step (UART RX is interrupt-driven now).
+        core.csrs_mut().set_wires(
+            clint.borrow().msip(),
+            clint.borrow().mtip(),
+            irq.borrow().meip(),
+        );
     }
     let output = String::from_utf8_lossy(&captured.borrow()).into_owned();
 

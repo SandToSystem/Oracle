@@ -68,5 +68,7 @@ pub use decode::{decode, Uop};
 pub use loader::{load_elf, load_elf_bytes, ElfError};
 // The device/fabric layer is owned by Hermes; re-exported so ISS's public API
 // still exposes a device interface (`iss_core::MmioDevice`, `MemoryMap`, …).
-pub use hermes::{le_load, le_store, Dram, DramModel, MemoryMap, MmioDevice, Soc, SocBuilder, Tickable};
+pub use hermes::{
+    le_load, le_store, Dram, DramModel, MemoryMap, MmioDevice, Soc, SocBuilder, Tickable,
+};
 pub use packet::{CommitPacket, HaltEvent, HaltKind, StoreObserved, TrapEvent};

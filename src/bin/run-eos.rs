@@ -78,9 +78,16 @@ fn main() -> ExitCode {
         .uart_tx(Box::new(CrlfWriter(io::stdout())))
         .build()
         .expect("failed to wire SoC");
-    // Keep the ticker: it shares the UART handle with `map`, so ticking it
-    // advances the device the core reads through the bus.
-    let Soc { mut map, ticker, .. } = soc;
+    // Keep the ticker and the CLINT/IRQ handles: the ticker shares the device
+    // handles with `map`, and the handles let us bridge the interrupt wires into
+    // the core (UART RX is delivered as a machine-external interrupt).
+    let Soc {
+        mut map,
+        ticker,
+        clint,
+        irq,
+        ..
+    } = soc;
 
     let entry = match load_elf(&mut map, &path) {
         Ok(entry) => entry,
@@ -113,7 +120,9 @@ fn main() -> ExitCode {
         if since_sync >= MTIME_SYNC_STEPS {
             since_sync = 0;
             let us = start.elapsed().as_micros() as u64;
-            let _ = core.bus_mut().write(CLINT_MTIME_LO, Width::Word, us as u32, 0xF);
+            let _ = core
+                .bus_mut()
+                .write(CLINT_MTIME_LO, Width::Word, us as u32, 0xF);
             let _ = core
                 .bus_mut()
                 .write(CLINT_MTIME_HI, Width::Word, (us >> 32) as u32, 0xF);
@@ -132,6 +141,13 @@ fn main() -> ExitCode {
         }
 
         ticker.tick_all(); // latch the next keyboard byte once RX drains
+                           // Bridge the device interrupt wires into the core so a received byte is
+                           // delivered to the guest as a machine-external interrupt.
+        core.csrs_mut().set_wires(
+            clint.borrow().msip(),
+            clint.borrow().mtip(),
+            irq.borrow().meip(),
+        );
     }
 
     // Drop the SoC (core + ticker) so TerminalBackend restores the terminal
