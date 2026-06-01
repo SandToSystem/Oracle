@@ -155,4 +155,40 @@ fn eos_snake() {
     );
 }
 
+/// Path to a built Eos demo ELF, or `None` if the cross-build was unavailable.
+fn eos_elf(name: &str) -> Option<String> {
+    let path = format!(
+        "{}/Eos/target/riscv32i-unknown-none-elf/release/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    std::path::Path::new(&path).exists().then_some(path)
+}
+
+/// Real-time Snake, quit path: feeding `q` must end the game cleanly. With the
+/// instruction-bound `mtime` of the test harness the snake never reaches its
+/// auto-advance threshold before the keystroke arrives, so this isolates the
+/// RX + quit behaviour. Proves the non-blocking `try_getchar()` loop receives
+/// input and halts.
+#[test]
+fn eos_snake_rt_quit() {
+    let Some(elf) = eos_elf("snake_rt") else {
+        eprintln!("eos_snake_rt_quit: snake_rt ELF not built; skipping");
+        return;
+    };
+    run_demo_with_input(&elf, "snake_rt", b"q", &["status=quit", "PASS snake-rt"]);
+}
+
+/// Real-time Snake, timer path: with no input the snake auto-advances on the
+/// CLINT timer (here driven by the harness's per-step tick) straight into the
+/// right wall and dies. Proves the timer-gated advance, render, collision, and
+/// halt path without depending on any wall-clock timing.
+#[test]
+fn eos_snake_rt_timer() {
+    let Some(elf) = eos_elf("snake_rt") else {
+        eprintln!("eos_snake_rt_timer: snake_rt ELF not built; skipping");
+        return;
+    };
+    run_demo_with_input(&elf, "snake_rt", b"", &["status=dead", "PASS snake-rt"]);
+}
+
 include!(concat!(env!("OUT_DIR"), "/eos_demos_generated.rs"));

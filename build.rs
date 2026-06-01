@@ -51,7 +51,7 @@ const EOS_DEMOS: &[&str] = &["sorts", "sieve", "numerics", "hanoi", "floyd", "cr
 /// need a scripted byte source rather than a bare run. They are driven by
 /// hand-written tests in `tests/eos_demos.rs` (which locate the ELF and feed a
 /// fixed input), not by the auto-generated no-input cases below.
-const EOS_INPUT_DEMOS: &[&str] = &["snake"];
+const EOS_INPUT_DEMOS: &[&str] = &["snake", "snake_rt"];
 
 /// The Rust target the Eos runtime is built for (see `Eos/.cargo/config.toml`).
 const EOS_TARGET: &str = "riscv32i-unknown-none-elf";

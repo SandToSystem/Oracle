@@ -17,10 +17,10 @@ use std::env;
 use std::io::{self, Write};
 use std::process::ExitCode;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hermes::terminal::TerminalBackend;
-use iss_core::{load_elf, Core, Soc, SocBuilder};
+use iss_core::{load_elf, Core, Soc, SocBuilder, Width};
 
 /// Wraps a writer and expands `\n` into `\r\n`.
 ///
@@ -55,6 +55,12 @@ const UART_TX: u32 = 0x1000_1000;
 /// Steps without any UART TX after which the guest is assumed to be blocked in
 /// `getchar()`; we then poll the keyboard gently instead of busy-spinning.
 const IDLE_STEPS: u32 = 5_000;
+/// How often to resync `mtime` to the wall clock (in steps). Frequent enough
+/// for sub-millisecond timer resolution, rare enough to be free for compute.
+const MTIME_SYNC_STEPS: u32 = 1_024;
+/// CLINT `mtime` low/high register addresses on the Snake SoC.
+const CLINT_MTIME_LO: u32 = 0x0200_0000 + 0xBFF8;
+const CLINT_MTIME_HI: u32 = 0x0200_0000 + 0xBFFC;
 /// Hard bound so a runaway guest can't spin forever.
 const MAX_STEPS: u64 = 5_000_000_000;
 
@@ -87,8 +93,10 @@ fn main() -> ExitCode {
     let mut core = Core::new(map);
     core.state_mut().pc = entry;
 
+    let start = Instant::now();
     let mut exit_code: u8 = 0;
     let mut idle: u32 = 0;
+    let mut since_sync: u32 = 0;
     let mut halted = false;
     for _ in 0..MAX_STEPS {
         let pkt = core.step();
@@ -98,8 +106,21 @@ fn main() -> ExitCode {
             break;
         }
 
+        // Tie `mtime` to the host wall clock so timer-based guests (snake_rt)
+        // run in real time on any machine. Compute-only guests never read
+        // `mtime`, so this just costs an occasional clock read for them.
+        since_sync += 1;
+        if since_sync >= MTIME_SYNC_STEPS {
+            since_sync = 0;
+            let us = start.elapsed().as_micros() as u64;
+            let _ = core.bus_mut().write(CLINT_MTIME_LO, Width::Word, us as u32, 0xF);
+            let _ = core
+                .bus_mut()
+                .write(CLINT_MTIME_HI, Width::Word, (us >> 32) as u32, 0xF);
+        }
+
         // A UART TX means the guest is producing output (running, rendering);
-        // a long TX-less stretch means it is parked in getchar() waiting on us.
+        // a long TX-less stretch means it is parked waiting for input.
         if pkt.store.map(|s| s.addr) == Some(UART_TX) {
             idle = 0;
         } else {
