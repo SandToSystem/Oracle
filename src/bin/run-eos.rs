@@ -14,12 +14,40 @@
 //! use the keyboard. The process exits with the guest's halt code (`a0`).
 
 use std::env;
+use std::io::{self, Write};
 use std::process::ExitCode;
 use std::thread;
 use std::time::Duration;
 
 use hermes::terminal::TerminalBackend;
 use iss_core::{load_elf, Core, Soc, SocBuilder};
+
+/// Wraps a writer and expands `\n` into `\r\n`.
+///
+/// `TerminalBackend` puts the terminal in raw mode, which disables the kernel's
+/// `ONLCR` newline translation, so the guest's bare line feeds would otherwise
+/// stair-step (drop a line without returning to column 0). Re-adding the
+/// carriage return on the way out restores normal newline behaviour for the
+/// UART TX stream without the guest having to know about terminals.
+struct CrlfWriter<W: Write>(W);
+
+impl<W: Write> Write for CrlfWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut tmp = Vec::with_capacity(buf.len() + 4);
+        for &b in buf {
+            if b == b'\n' {
+                tmp.push(b'\r');
+            }
+            tmp.push(b);
+        }
+        self.0.write_all(&tmp)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
 
 /// UART TX register address (Snake SoC). A store here is the guest emitting a
 /// byte — used to tell "rendering" apart from "spin-waiting for input".
@@ -38,9 +66,10 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
 
-    // RX from the real terminal; TX defaults to stdout.
+    // RX from the real terminal; TX to stdout with raw-mode-safe newlines.
     let soc: Soc = SocBuilder::new()
         .uart_rx(Box::new(TerminalBackend::new()))
+        .uart_tx(Box::new(CrlfWriter(io::stdout())))
         .build()
         .expect("failed to wire SoC");
     // Keep the ticker: it shares the UART handle with `map`, so ticking it
