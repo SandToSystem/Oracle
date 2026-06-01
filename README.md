@@ -126,7 +126,35 @@ a segment that lands outside the bus. The loader does **not** zero
 
 ```bash
 cargo build
-cargo test                          # unit + decode + integration + doctest
+cargo test                          # unit + decode + integration + doctest + riscv-tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+```
+
+## riscv-tests
+
+The official RISC-V ISA suite runs end-to-end on the ISS. The `riscv-tests/`
+submodule supplies the inputs:
+
+- `riscv-tests/isa/rv32ui/*.S` — the upstream test bodies, unmodified.
+- `riscv-tests/env/` — its own env submodule (the SandToSystem fork of
+  `riscv-test-env`), carrying our `snake/` shim (`riscv_test.h` + `link.ld`) that
+  signals pass/fail with **`EBREAK`** (`a0` = exit code, `0` = pass) instead of
+  spike-style `tohost` polling — matching the ISS `HaltKind::Voluntary` halt.
+
+At build time `build.rs` cross-compiles the allow-listed tests
+(`-march=rv32i_zicsr -mabi=ilp32`, linked at DRAM base `0x8000_0000`) against the
+`snake` env and generates one `#[test]` per ELF for `tests/riscv_tests.rs`, which
+loads each image via [`load_elf`], seeds `pc = e_entry`, runs to halt, and asserts
+`exit_code == 0` (a failure decodes to the failing test-case number).
+
+Currently wired: 40 `rv32ui-p-*` (all RV32I integer; `fence_i`/`ma_data` excluded
+as out-of-ISA) and 3 `rv32mi-p-*` (`csr` / `scall` / `mcsr` — the ECALL-only trap
+subset). The harness is best-effort: if the RISC-V toolchain
+(`riscv64-unknown-elf-gcc`, found on `PATH` or `/opt/riscv/bin`) or the submodules
+are absent, the build still succeeds and the suite runs zero tests.
+
+```bash
+git submodule update --init --recursive   # fetch riscv-tests (+ its nested env)
+cargo test --test riscv_tests              # run just the ISA suite
 ```
