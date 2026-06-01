@@ -4,3 +4,6 @@
 [submodule "riscv-tests"]
 	path = riscv-tests
 	url = git@github.com:SandToSystem/riscv-tests.git
+[submodule "Eos"]
+	path = Eos
+	url = git@github.com:SandToSystem/Eos.git
