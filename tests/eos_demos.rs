@@ -19,6 +19,7 @@ use std::cell::RefCell;
 use std::io::{self, Write};
 use std::rc::Rc;
 
+use hermes::terminal::QueuedBytes;
 use iss_core::{load_elf, Core, Soc, SocBuilder};
 
 /// Step bound — generous; a passing demo halts in far fewer. Catches a runaway
@@ -74,6 +75,84 @@ fn run_demo(elf_path: &str, name: &str) {
             panic!("{name}: did not halt within {steps} steps. UART output:\n{output}")
         }
     }
+}
+
+/// Like [`run_demo`], but feeds a scripted byte sequence to the UART RX path
+/// and ticks the SoC between instructions so those bytes actually arrive.
+///
+/// The other demos run the core straight through, but an input demo busy-waits
+/// in `getchar()` until `STATUS.RX_VALID` is set — and the UART only latches a
+/// byte from its `ByteSource` on `tick()`. So here we single-step the core and
+/// tick the SoC each step (the ticker shares the same device handles as the
+/// bus). Asserts a clean halt and that every string in `expect` appears in the
+/// captured UART output.
+fn run_demo_with_input(elf_path: &str, name: &str, input: &[u8], expect: &[&str]) {
+    let captured = Rc::new(RefCell::new(Vec::<u8>::new()));
+    let soc: Soc = SocBuilder::new()
+        .uart_tx(Box::new(SharedSink(captured.clone())))
+        .uart_rx(Box::new(QueuedBytes::new(input.iter().copied())))
+        .build()
+        .unwrap_or_else(|e| panic!("{name}: failed to wire SoC: {e:?}"));
+    // Keep the ticker: it shares the UART/CLINT handles with `map`, so ticking
+    // it advances the very devices the core reads through the bus.
+    let Soc { mut map, ticker, .. } = soc;
+
+    let entry =
+        load_elf(&mut map, elf_path).unwrap_or_else(|e| panic!("{name}: failed to load ELF: {e}"));
+
+    let mut core = Core::new(map);
+    core.state_mut().pc = entry;
+
+    let mut halt = None;
+    for _ in 0..MAX_STEPS {
+        let pkt = core.step();
+        if let Some(h) = pkt.halt {
+            halt = Some(h);
+            break;
+        }
+        ticker.tick_all(); // load the next scripted RX byte once the buffer drains
+    }
+    let output = String::from_utf8_lossy(&captured.borrow()).into_owned();
+
+    match halt {
+        Some(h) if h.exit_code == 0 => {
+            for needle in expect {
+                assert!(
+                    output.contains(needle),
+                    "{name}: expected {needle:?} in UART output:\n{output}"
+                );
+            }
+            print!("--- {name} UART output ---\n{output}");
+        }
+        Some(h) => panic!(
+            "{name}: FAILED (halt {:?}, exit {}). UART output:\n{output}",
+            h.kind, h.exit_code
+        ),
+        None => panic!("{name}: did not halt within {MAX_STEPS} steps. UART output:\n{output}"),
+    }
+}
+
+/// The Snake game, driven entirely over UART RX. Steers right ×3, up ×2,
+/// left ×4 — eating all three foods — then quits. A score of 3 with a `quit`
+/// status is only reachable if every scripted keystroke was received and acted
+/// on, so this is the end-to-end proof that the RX path works. (If RX were
+/// broken, `getchar()` would spin and the run would hit the step bound.)
+#[test]
+fn eos_snake() {
+    let elf = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/Eos/target/riscv32i-unknown-none-elf/release/snake"
+    );
+    if !std::path::Path::new(elf).exists() {
+        eprintln!("eos_snake: snake ELF not built (Eos cross-build unavailable); skipping");
+        return;
+    }
+    run_demo_with_input(
+        elf,
+        "snake",
+        b"dddwwaaaaq",
+        &["score=3", "status=quit", "PASS snake"],
+    );
 }
 
 include!(concat!(env!("OUT_DIR"), "/eos_demos_generated.rs"));

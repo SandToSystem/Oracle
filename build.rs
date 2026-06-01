@@ -47,6 +47,12 @@ const GCC_FLAGS: &[&str] = &[
 /// on UART RX (`getchar`) and would never halt without an input source.
 const EOS_DEMOS: &[&str] = &["sorts", "sieve", "numerics", "hanoi", "floyd", "crc32"];
 
+/// Input-driven Eos demos: built like the rest, but they consume UART RX and so
+/// need a scripted byte source rather than a bare run. They are driven by
+/// hand-written tests in `tests/eos_demos.rs` (which locate the ELF and feed a
+/// fixed input), not by the auto-generated no-input cases below.
+const EOS_INPUT_DEMOS: &[&str] = &["snake"];
+
 /// The Rust target the Eos runtime is built for (see `Eos/.cargo/config.toml`).
 const EOS_TARGET: &str = "riscv32i-unknown-none-elf";
 
@@ -178,7 +184,7 @@ fn build_eos_demos(manifest: &Path, out_dir: &Path) {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let mut cmd = Command::new(&cargo);
     cmd.current_dir(&eos).args(["build", "--release"]);
-    for demo in EOS_DEMOS {
+    for demo in EOS_DEMOS.iter().chain(EOS_INPUT_DEMOS) {
         cmd.args(["--bin", demo]);
     }
     // Strip the parent build's injected flags so they don't clobber Eos's
